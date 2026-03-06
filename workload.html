@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Erin 时光记录器 ⏱️</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@700&display=swap');
+        body { font-family: 'Inter', sans-serif; transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); -webkit-tap-highlight-color: transparent; overflow-x: hidden; }
+        .timer-font { font-family: 'Inter', sans-serif; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+        
+        /* 藕荷色自定义色 (Pale Pinkish Purple #e4c6d0) */
+        :root {
+            --lotus-color: #e4c6d0;
+            --lotus-dark: #d4a6b8;
+            --lotus-light: #f0dce6;
+        }
+        
+        /* Clear Mode Distinction */
+        body.light { background-color: #f8fafc; color: #0f172a; }
+        .light .glass { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+        .light input { background-color: #ffffff !important; color: #0f172a !important; border: 1px solid #cbd5e1 !important; }
+        .light input::placeholder { color: #64748b; }
+        .light #display { 
+            color: #475569; /* Slightly deeper gray for better visibility */
+            text-shadow: none; 
+        }
+        .light .stats-card { background: #ffffff; border: 2px solid #cbd5e1; }
+        .light .stats-card span:first-child { color: #0f172a !important; font-weight: 900; } /* High contrast label */
+        .light .stats-card .text-3xl { color: #000000 !important; } /* Pure black stats value */
+        .light .text-dim { color: #1e293b; } /* High contrast secondary text */
+        .light .duration-val { color: #000000 !important; font-weight: 900; }
+        .light .record-card { border: 1px solid #cbd5e1; }
+
+        body.dark { background-color: #1c1c1e; color: #f8fafc; }
+        .dark .glass { background: rgba(44, 44, 46, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .dark input { background-color: #2c2c2e !important; color: #ffffff !important; border: 1px solid #3a3a3c !important; }
+        .dark #display { 
+            color: #cbd5e1; /* Brighter gray for dark mode */
+            text-shadow: 0 0 15px rgba(255,255,255,0.05); 
+        }
+        .dark .stats-card { background: #2c2c2e; border: 1px solid #3a3a3c; }
+        .dark .duration-val { color: #ffffff !important; }
+        
+        /* Tactical Stop Button Enhancement */
+        .btn-stop-tactical { background: #3f3f46; color: #fecaca; border: 1px solid #52525b; }
+        .dark .btn-stop-tactical { background: #450a0a; color: #fecaca; border: 1px solid #7f1d1d; }
+        
+        /* Mobile App Scaling */
+        @media (max-width: 640px) {
+            #display { font-size: 6rem !important; }
+            input { font-size: 1rem !important; padding-top: 0.75rem !important; padding-bottom: 0.75rem !important; }
+            .btn-text { font-size: 0.85rem !important; }
+            .record-title { font-size: 1rem !important; }
+            .record-content { font-size: 0.85rem !important; }
+        }
+
+        .safe-bottom { padding-bottom: calc(30px + env(safe-area-inset-bottom)); }
+        .safe-top { padding-top: calc(12px + env(safe-area-inset-top)); }
+        @keyframes pulse-red { 0%, 100% { } 50% { background-color: rgba(239, 68, 68, 0.1); } }
+        .pomodoro-end { animation: pulse-red 1s infinite; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        
+        /* Blinking Colon when running */
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+        .running .colon { animation: blink 1s infinite; }
+    </style>
+</head>
+<body class="light bg-slate-50 dark:bg-slate-900 min-h-screen flex flex-col no-scrollbar">
+
+    <!-- Top Navigation Bar -->
+    <nav class="safe-top sticky top-0 z-50 flex justify-between items-center px-6 glass shadow-sm">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center shadow-lg" style="background-color: var(--lotus-color); box-shadow: 0 10px 15px -3px rgba(228,198,208,0.4);">
+                <i class="fa-solid fa-clock text-white text-sm"></i>
+            </div>
+            <span class="font-bold text-slate-900 dark:text-white tracking-tight">Erin 时光记录器</span>
+        </div>
+        <div class="flex items-center gap-4">
+            <button id="themeToggle" class="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 transition-all">
+                <i id="themeIcon" class="fa-solid fa-moon"></i>
+            </button>
+            <button id="exportCsvBtn" class="w-10 h-10 flex items-center justify-center rounded-full text-white transition-all" style="background-color: var(--lotus-color);" onmouseover="this.style.backgroundColor='var(--lotus-dark)'" onmouseout="this.style.backgroundColor='var(--lotus-color)'" title="导出 CSV">
+                <i class="fa-solid fa-file-csv"></i>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 p-5 max-w-lg mx-auto w-full space-y-6">
+        
+        <!-- Timer Section (Hero) -->
+        <section class="relative pt-12 pb-4 flex flex-col items-center justify-center px-6">
+            <div id="live-clock" class="absolute top-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 tracking-[0.3em] uppercase">2026-02-25 02:22:00</div>
+            
+            <div id="display" class="timer-font text-[6.5rem] font-black leading-none transition-all tracking-tight flex items-center">
+                <span>00</span><span class="mx-0.5">:</span><span>00</span><span class="mx-0.5">:</span><span class="text-[0.45em] self-end mb-[0.15em] opacity-60 ml-2">00</span>
+            </div>
+            
+            <div class="mt-4 flex items-center gap-2 px-4 py-1.5 bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-400 rounded-full text-[10px] font-bold uppercase tracking-widest">
+                <i class="fa-solid fa-clock animate-pulse" style="color: var(--lotus-color);"></i>
+                Erin TIME TRACKER
+            </div>
+        </section>
+
+        <!-- Input Section -->
+        <section class="space-y-3 px-2">
+            <div class="relative">
+                <i class="fa-solid fa-folder-open absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+                <input type="text" id="case-number" placeholder="案件编号 (Case #)" class="w-full pl-12 pr-4 py-3.5 rounded-2xl border-none ring-1 ring-slate-200 dark:ring-slate-800 bg-slate-50 dark:bg-slate-800 text-base font-bold outline-none transition-all focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div class="relative">
+                <i class="fa-solid fa-pen-nib absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+                <input type="text" id="work-content" placeholder="工作内容描述..." class="w-full pl-12 pr-4 py-3.5 rounded-2xl border-none ring-1 ring-slate-200 dark:ring-slate-800 bg-slate-50 dark:bg-slate-800 text-base font-bold outline-none transition-all focus:ring-2 focus:ring-blue-500">
+            </div>
+        </section>
+
+        <!-- Action Grid -->
+        <section class="grid grid-cols-2 gap-4">
+            <button id="startBtn" class="flex flex-col items-center justify-center gap-3 text-white py-6 rounded-[2rem] font-bold shadow-2xl active:scale-90 transition-all" style="background-color: var(--lotus-color); box-shadow: 0 20px 25px -5px rgba(228,198,208,0.4);">
+                <i class="fa-solid fa-play text-2xl"></i>
+                <span class="text-sm uppercase tracking-wider btn-text">开始计时</span>
+            </button>
+            <button id="pauseBtn" class="hidden flex flex-col items-center justify-center gap-3 bg-orange-500 text-white py-6 rounded-[2rem] font-bold shadow-2xl shadow-orange-500/30 active:scale-90 transition-all">
+                <i class="fa-solid fa-pause text-2xl"></i>
+                <span class="text-sm uppercase tracking-wider btn-text">暂时停止</span>
+            </button>
+            <button id="stopBtn" class="flex flex-col items-center justify-center gap-3 btn-stop-tactical py-6 rounded-[2rem] font-bold shadow-xl active:scale-90 transition-all">
+                <i class="fa-solid fa-square text-2xl text-red-500"></i>
+                <span class="text-sm uppercase tracking-wider btn-text">停止保存</span>
+            </button>
+            <button id="pomodoroBtn" class="col-span-2 flex items-center justify-center gap-4 bg-indigo-600 text-white py-5 rounded-3xl font-bold shadow-lg shadow-indigo-600/20 active:scale-95 transition-all">
+                <i class="fa-solid fa-clock text-xl"></i>
+                <span id="pomo-text" class="text-base font-bold uppercase tracking-widest">开启番茄专注 (30m)</span>
+            </button>
+        </section>
+
+        <!-- Dynamic Stats Widgets -->
+        <section class="grid grid-cols-2 gap-4">
+            <div class="glass p-5 rounded-[2rem] flex flex-col items-start gap-1 shadow-sm stats-card">
+                <span class="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em]">本周工时</span>
+                <div class="flex items-baseline gap-1">
+                    <span id="weekly-total" class="text-3xl font-black text-slate-900 dark:text-white">0.0</span>
+                    <span class="text-xs text-slate-400 font-bold">H</span>
+                </div>
+            </div>
+            <div class="glass p-5 rounded-[2rem] flex flex-col items-start gap-1 shadow-sm stats-card">
+                <span class="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em]">本月总计</span>
+                <div class="flex items-baseline gap-1">
+                    <span id="monthly-total" class="text-3xl font-black text-slate-900 dark:text-white">0.0</span>
+                    <span class="text-xs text-slate-400 font-bold">H</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Mobile-first Records List -->
+        <section class="space-y-5 pb-24">
+            <div class="flex flex-col gap-3 px-2">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-lg font-black text-slate-900 dark:text-white tracking-tight">最近记录</h2>
+                    <div class="flex items-center gap-2">
+                        <div class="relative">
+                            <i class="fa-solid fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                            <input type="text" id="historySearch" placeholder="搜索..." class="pl-9 pr-4 py-2 bg-slate-200/50 dark:bg-slate-800 text-sm rounded-full outline-none focus:ring-2 focus:ring-blue-500 w-32 font-bold transition-all">
+                        </div>
+                    </div>
+                </div>
+                <div id="admin-tools" class="flex items-center gap-2" style="display: none;">
+                    <button id="exportCsvBtn" class="flex-1 px-3 py-2 text-white text-xs font-bold rounded-full shadow-md transition-all flex items-center justify-center gap-1" style="background-color: var(--lotus-color);" onmouseover="this.style.backgroundColor='var(--lotus-dark)'" onmouseout="this.style.backgroundColor='var(--lotus-color)'">
+                        <i class="fa-solid fa-file-csv"></i>
+                        导出CSV
+                    </button>
+                </div>
+            </div>
+            
+            <div id="history-list" class="space-y-3"></div>
+            <div id="showAllContainer" class="hidden">
+                <button id="showAllBtn" class="w-full py-4 text-sm font-black text-slate-400 dark:text-slate-500 bg-slate-100/50 dark:bg-slate-800/30 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-800">加载更早的历史记录</button>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer Copyright -->
+    <footer class="text-center py-6 text-[10px] text-slate-400 safe-bottom">
+        <div class="mb-1">v1.0 · 2026-03-06</div>
+        <div>&copy; 2026 Atom TONG · Time Tracker</div>
+    </footer>
+
+    <script>
+        const SUPABASE_URL = 'https://ghbmmnapyupusmyxjkvv.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_MkMhoECq7wo5qFi3K9Shcg_7LiPM1oU';
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let startTime, elapsedTime = 0, timerInterval;
+        let pomoInterval, pomoRemaining = 0, isPomoRunning = false;
+        let history = [];
+        let showAll = false;
+
+        const display = document.getElementById('display');
+        const startBtn = document.getElementById('startBtn');
+        const pauseBtn = document.getElementById('pauseBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const pomoBtn = document.getElementById('pomodoroBtn');
+        const pomoText = document.getElementById('pomo-text');
+        const historyList = document.getElementById('history-list');
+        const historySearch = document.getElementById('historySearch');
+
+        let expandedDates = new Set();
+
+        async function loadData() {
+            try {
+                const { data, error } = await supabaseClient.from('pontnova_workload_records').select('*').order('timestamp', { ascending: false }).limit(showAll ? 200 : 30);
+                if (data) { history = data; updateUI(); }
+            } catch (e) { console.error(e); }
+        }
+
+        function formatTime(ms) {
+            let h = Math.floor(ms/3600000), m = Math.floor((ms%3600000)/60000), s = Math.floor((ms%60000)/1000);
+            return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+        }
+
+        function updateDisplay(ms) {
+            let h = Math.floor(ms/3600000), m = Math.floor((ms%3600000)/60000), s = Math.floor((ms%60000)/1000);
+            display.innerHTML = `<span>${h.toString().padStart(2,'0')}</span><span class="mx-0.5">:</span><span>${m.toString().padStart(2,'0')}</span><span class="mx-0.5">:</span><span class="text-[0.45em] self-end mb-[0.15em] opacity-60 ml-2">${s.toString().padStart(2,'0')}</span>`;
+        }
+
+        startBtn.onclick = () => {
+            if (timerInterval) return;
+            startTime = Date.now() - elapsedTime;
+            timerInterval = setInterval(() => { 
+                elapsedTime = Date.now() - startTime; 
+                updateDisplay(elapsedTime); 
+            }, 100);
+            startBtn.classList.add('hidden'); pauseBtn.classList.remove('hidden');
+            if (isPomoRunning && !pomoInterval) startPomoTicker();
+        };
+
+        pauseBtn.onclick = () => { 
+            clearInterval(timerInterval); 
+            timerInterval = null; 
+            clearInterval(pomoInterval); 
+            pomoInterval = null; 
+            startBtn.classList.remove('hidden'); 
+            pauseBtn.classList.add('hidden'); 
+        };
+
+        stopBtn.onclick = async () => {
+            if (elapsedTime === 0 && !isPomoRunning) return;
+            clearInterval(timerInterval); timerInterval = null; clearInterval(pomoInterval); pomoInterval = null;
+            
+            const quarterHours = Math.max(1, Math.round((elapsedTime / 60000) / 15)) * 0.25;
+            const record = {
+                timestamp: Date.now(),
+                date: new Date().toISOString().split('T')[0],
+                case_number: document.getElementById('case-number').value || "MOBILE",
+                content: (isPomoRunning ? "[番茄] " : "") + (document.getElementById('work-content').value || "未定义任务"),
+                duration_hours: quarterHours
+            };
+
+            const { error } = await supabaseClient.from('pontnova_workload_records').insert([record]);
+            if (!error) { 
+                history.unshift(record); 
+                document.getElementById('case-number').value = "";
+                document.getElementById('work-content').value = "";
+                updateUI(); 
+            }
+            
+            elapsedTime = 0; 
+            updateDisplay(0);
+            isPomoRunning = false; pomoText.textContent = "启动番茄专注 (30m)";
+            startBtn.classList.remove('hidden'); pauseBtn.classList.add('hidden');
+        };
+
+        pomoBtn.onclick = () => {
+            if (isPomoRunning) { clearInterval(pomoInterval); pomoInterval = null; isPomoRunning = false; pomoText.textContent = "启动番茄专注 (30m)"; return; }
+            pomoRemaining = 30 * 60; isPomoRunning = true; startPomoTicker(); startBtn.onclick();
+        };
+
+        function startPomoTicker() {
+            if (pomoInterval) clearInterval(pomoInterval);
+            pomoInterval = setInterval(() => {
+                pomoRemaining--;
+                let m = Math.floor(pomoRemaining / 60), s = pomoRemaining % 60;
+                pomoText.textContent = `专注中: ${m}:${s.toString().padStart(2,'0')}`;
+                if (pomoRemaining <= 0) {
+                    clearInterval(pomoInterval); pomoInterval = null; isPomoRunning = false;
+                    pomoText.textContent = "专注完成! 🍎";
+                    document.body.classList.add('pomodoro-end');
+                    setTimeout(() => document.body.classList.remove('pomodoro-end'), 5000);
+                }
+            }, 1000);
+        }
+
+        function updateUI() {
+            historyList.innerHTML = '';
+            const searchTerm = historySearch.value.toLowerCase();
+            const today = new Date().toISOString().split('T')[0];
+            let week = 0, month = 0, now = new Date();
+            let startW = new Date(now.setDate(now.getDate() - now.getDay())).toISOString().split('T')[0];
+            let startM = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+
+            // Filter
+            const filtered = history.filter(r => 
+                (r.case_number||"").toLowerCase().includes(searchTerm) || 
+                (r.content||"").toLowerCase().includes(searchTerm)
+            );
+
+            // Group by date
+            const groups = {};
+            filtered.forEach(r => {
+                if (!groups[r.date]) groups[r.date] = [];
+                groups[r.date].push(r);
+            });
+
+            const sortedDates = Object.keys(groups).sort().reverse();
+
+            sortedDates.forEach(date => {
+                const isToday = (date === today);
+                const isExpanded = isToday || expandedDates.has(date) || showAll;
+                const dayRecords = groups[date];
+                const dayTotal = dayRecords.reduce((sum, r) => sum + r.duration_hours, 0);
+
+                if (isExpanded) {
+                    // Header for non-today dates when expanded
+                    if (!isToday) {
+                        const dateHeader = document.createElement('div');
+                        dateHeader.className = "px-4 py-2 text-[10px] font-black text-blue-500 uppercase tracking-widest flex justify-between items-center cursor-pointer hover:opacity-70";
+                        dateHeader.onclick = () => { 
+                            if (showAll) { showAll = false; expandedDates.clear(); }
+                            else { expandedDates.delete(date); }
+                            updateUI(); 
+                        };
+                        dateHeader.innerHTML = `<span>📅 ${date} (点击收起)</span> <span>${dayTotal.toFixed(2)}H <i class="fa-solid fa-chevron-up ml-1"></i></span>`;
+                        historyList.appendChild(dateHeader);
+                    }
+
+                    dayRecords.forEach(r => {
+                        const item = document.createElement('div');
+                        item.className = "glass p-5 rounded-[2rem] flex justify-between items-center shadow-sm record-card " + (isToday ? "border-blue-500/30 bg-blue-50/10" : "");
+                        item.innerHTML = `
+                            <div class="flex flex-col gap-1">
+                                <span class="text-[9px] text-slate-500 dark:text-slate-400 font-black uppercase tracking-wider">${isToday ? '<span class="text-blue-500">TODAY</span>' : r.date}</span>
+                                <span class="text-base font-black text-blue-700 dark:text-blue-400 record-title">${r.case_number}</span>
+                                <span class="text-xs text-slate-700 dark:text-slate-400 font-medium record-content line-clamp-1">${r.content || ''}</span>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <div class="text-right">
+                                    <span class="text-lg font-black text-slate-900 dark:text-white duration-val">${r.duration_hours.toFixed(2)}</span>
+                                    <span class="text-[9px] font-black text-slate-500 dark:text-slate-400">H</span>
+                                </div>
+                                <button onclick="editRec(${r.timestamp})" class="w-10 h-10 rounded-full flex items-center justify-center bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-blue-500 transition-colors" title="修改记录">
+                                    <i class="fa-solid fa-pen text-xs"></i>
+                                </button>
+                                <button onclick="delRec(${r.timestamp})" class="w-10 h-10 rounded-full flex items-center justify-center bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-red-500 transition-colors" title="删除记录">
+                                    <i class="fa-solid fa-trash-can text-xs"></i>
+                                </button>
+                            </div>
+                        `;
+                        historyList.appendChild(item);
+                    });
+                } else {
+                    // Collapsed Row
+                    const summary = document.createElement('div');
+                    summary.className = "glass p-4 rounded-3xl flex justify-between items-center shadow-sm border border-dashed border-slate-300 dark:border-slate-700 opacity-80 cursor-pointer active:scale-[0.98] transition-all";
+                    summary.onclick = () => { expandedDates.add(date); updateUI(); };
+                    summary.innerHTML = `
+                        <div class="flex flex-col">
+                            <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest">📅 ${date}</span>
+                            <span class="text-xs text-slate-400 font-bold">已归档 ${dayRecords.length} 项记录</span>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <span class="text-sm font-black text-blue-500">${dayTotal.toFixed(2)} H</span>
+                            <span class="text-xs font-black text-slate-400 underline uppercase tracking-tighter">展开</span>
+                        </div>
+                    `;
+                    historyList.appendChild(summary);
+                }
+            });
+
+            const showAllBtn = document.getElementById('showAllBtn');
+            if (sortedDates.length > 1) {
+                document.getElementById('showAllContainer').classList.remove('hidden');
+                showAllBtn.textContent = showAll ? "收起所有历史记录" : "加载并展开所有历史记录";
+            } else {
+                document.getElementById('showAllContainer').classList.add('hidden');
+            }
+
+            // Calculate totals (always from full history)
+            history.forEach(r => {
+                if (r.date >= startW) week += r.duration_hours;
+                if (r.date >= startM) month += r.duration_hours;
+            });
+            document.getElementById('weekly-total').textContent = week.toFixed(1);
+            document.getElementById('monthly-total').textContent = month.toFixed(1);
+        }
+
+        window.delRec = async (ts) => {
+            if (!confirm("删除记录?")) return;
+            const { error } = await supabaseClient.from('pontnova_workload_records').delete().eq('timestamp', ts);
+            if (!error) { history = history.filter(i => i.timestamp !== ts); updateUI(); }
+        };
+
+        window.editRec = async (ts) => {
+            const record = history.find(i => i.timestamp === ts);
+            if (!record) return;
+            
+            // 创建修改模态框
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
+            modal.innerHTML = `
+                <div class="bg-white dark:bg-slate-900 rounded-3xl p-6 w-full max-w-md shadow-2xl">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-xl font-black text-slate-900 dark:text-white">修改记录</h3>
+                        <button onclick="this.closest('.fixed').remove()" class="w-10 h-10 rounded-full flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">案号</label>
+                            <input type="text" id="editCaseNumber" value="${record.case_number || ''}" 
+                                   class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">工作内容</label>
+                            <textarea id="editContent" rows="3" 
+                                      class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none">${record.content || ''}</textarea>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">工作时间 (小时)</label>
+                            <input type="number" id="editDuration" step="0.01" value="${record.duration_hours.toFixed(2)}" 
+                                   class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">日期</label>
+                            <input type="date" id="editDate" value="${record.date}" 
+                                   class="w-full px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
+                    
+                    <div class="flex gap-3 mt-8">
+                        <button onclick="this.closest('.fixed').remove()" class="flex-1 py-3 rounded-2xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors">
+                            取消
+                        </button>
+                        <button onclick="saveEdit(${ts})" class="flex-1 py-3 rounded-2xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-colors">
+                            保存修改
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        };
+
+        window.saveEdit = async (ts) => {
+            const caseNumber = document.getElementById('editCaseNumber').value.trim();
+            const content = document.getElementById('editContent').value.trim();
+            const duration = parseFloat(document.getElementById('editDuration').value);
+            const date = document.getElementById('editDate').value;
+            
+            if (!caseNumber) {
+                alert('请填写案号');
+                return;
+            }
+            
+            if (isNaN(duration) || duration <= 0) {
+                alert('请输入有效的工作时间');
+                return;
+            }
+            
+            if (!date) {
+                alert('请选择日期');
+                return;
+            }
+            
+            const updates = {
+                case_number: caseNumber,
+                content: content,
+                duration_hours: duration,
+                date: date
+            };
+            
+            const { error } = await supabaseClient
+                .from('pontnova_workload_records')
+                .update(updates)
+                .eq('timestamp', ts);
+            
+            if (error) {
+                alert('修改失败: ' + error.message);
+                return;
+            }
+            
+            // 更新本地数据
+            const index = history.findIndex(i => i.timestamp === ts);
+            if (index !== -1) {
+                history[index] = { ...history[index], ...updates };
+            }
+            
+            // 关闭模态框并更新UI
+            document.querySelector('.fixed').remove();
+            updateUI();
+            alert('记录已修改');
+        };
+
+        const themeBtn = document.getElementById('themeToggle');
+        const themeIcon = document.getElementById('themeIcon');
+        themeBtn.onclick = () => {
+            const isDark = document.body.classList.contains('dark');
+            document.body.classList.toggle('dark', !isDark);
+            document.body.classList.toggle('light', isDark);
+            themeIcon.className = isDark ? 'fa-solid fa-moon text-slate-400' : 'fa-solid fa-sun text-yellow-400';
+            localStorage.setItem('web_theme', !isDark ? 'dark' : 'light');
+        };
+        if (localStorage.getItem('web_theme') === 'dark') themeBtn.onclick();
+
+        historySearch.oninput = () => updateUI();
+
+        // Environment Detection
+        const isLocal = window.location.hostname === 'localhost' || 
+                        window.location.hostname === '127.0.0.1' || 
+                        window.location.hostname === '192.168.32.70';
+        
+        if (isLocal) {
+            document.getElementById('admin-tools').style.display = 'flex';
+        }
+
+        // 导出CSV功能
+        document.getElementById('exportCsvBtn').onclick = () => {
+            if (history.length === 0) {
+                alert('没有记录可导出');
+                return;
+            }
+            
+            // CSV 表头
+            let csv = '\uFEFF日期,案件编号,工作内容,工时(小时)\n';
+            
+            // 过滤后的数据（与当前显示一致）
+            const searchTerm = historySearch.value.toLowerCase();
+            const filteredHistory = history.filter(r => (r.case_number || "").toLowerCase().includes(searchTerm));
+            
+            filteredHistory.forEach(r => {
+                const date = r.date || new Date(r.timestamp).toISOString().split('T')[0];
+                const caseNum = (r.case_number || '').replace(/,/g, ';');
+                const content = (r.content || '').replace(/,/g, ';').replace(/\n/g, ' ');
+                const hours = r.duration_hours ? r.duration_hours.toFixed(2) : '0.00';
+                csv += `${date},${caseNum},${content},${hours}\n`;
+            });
+            
+            // 创建下载链接
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const timestamp = new Date().toISOString().split('T')[0];
+            link.href = URL.createObjectURL(blob);
+            link.download = `pontnova_workload_${timestamp}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            alert(`✅ 已导出 ${filteredHistory.length} 条记录`);
+        };
+
+        setInterval(() => document.getElementById('live-clock').textContent = new Date().toLocaleString(), 1000);
+        document.getElementById('showAllBtn').onclick = () => { 
+            showAll = !showAll; 
+            if (!showAll) expandedDates.clear();
+            updateUI(); 
+        };
+        loadData();
+    </script>
+    
+            <div class="text-xs font-bold text-slate-700 dark:text-slate-300">
+                v2.1.0
+            </div>
+            <div class="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
+                更新: 2026-03-03
+            </div>
+        </div>
+    </div>
+</body>
+</html>
